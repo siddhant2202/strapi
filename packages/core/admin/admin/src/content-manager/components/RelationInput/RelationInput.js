@@ -1,6 +1,6 @@
 import React, { useRef, useState, useMemo, useEffect } from 'react';
 import PropTypes from 'prop-types';
-import styled, { keyframes } from 'styled-components';
+import styled from 'styled-components';
 import { FixedSizeList as List } from 'react-window';
 
 import { ReactSelect } from '@strapi/helper-plugin';
@@ -15,7 +15,6 @@ import { Tooltip } from '@strapi/design-system/Tooltip';
 
 import Cross from '@strapi/icons/Cross';
 import Refresh from '@strapi/icons/Refresh';
-import Loader from '@strapi/icons/Loader';
 
 import { Relation } from './components/Relation';
 import { RelationItem } from './components/RelationItem';
@@ -37,21 +36,6 @@ const BoxEllipsis = styled(Box)`
     text-overflow: ellipsis;
     display: inherit;
   }
-`;
-
-const rotation = keyframes`
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(359deg);
-  }
-`;
-
-// TODO - to replace with loading prop on TextButton after DS release
-const LoaderWrapper = styled(Box)`
-  animation: ${rotation} 2s infinite linear;
-  will-change: transform;
 `;
 
 const RelationInput = ({
@@ -143,6 +127,58 @@ const RelationInput = ({
     };
   }, [paginatedRelations, relations, numberOfRelationsToDisplay, totalNumberOfRelations]);
 
+  /**
+   * This code is being isolated because it's a hack to fix a placement bug in
+   * `react-select` where when the options prop is updated the position of the
+   * menu is not recalculated.
+   */
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
+
+  const timeoutRef = useRef();
+
+  useEffect(() => {
+    setIsMenuOpen((isCurrentlyOpened) => {
+      /**
+       * If we're currently open and the options changed
+       * we want to close and open to ensure the menu's
+       * position is correctly calculated
+       */
+      if (isCurrentlyOpened) {
+        timeoutRef.current = setTimeout(() => {
+          setIsMenuOpen(true);
+        }, 10);
+
+        return false;
+      }
+
+      return false;
+    });
+  }, [options]);
+
+  useEffect(() => {
+    return () => {
+      /**
+       * If the component unmounts and a timer is set we should clear that timer
+       */
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+      }
+    };
+  }, []);
+
+  const handleMenuClose = () => {
+    setIsMenuOpen(false);
+
+    if (onSearchClose) {
+      onSearchClose();
+    }
+  };
+
+  const handleMenuOpen = () => {
+    setIsMenuOpen(true);
+    onSearchOpen();
+  };
+
   return (
     <Field error={error} name={name} hint={description} id={id}>
       <Relation
@@ -157,6 +193,7 @@ const RelationInput = ({
               // position fixed doesn't update position on scroll
               // react select doesn't update menu position on options change
               menuPosition="absolute"
+              menuPlacement="auto"
               components={{ Option }}
               options={options}
               isDisabled={disabled}
@@ -181,8 +218,9 @@ const RelationInput = ({
                 setValue(value);
                 onSearch(value);
               }}
-              onMenuClose={onSearchClose}
-              onMenuOpen={onSearchOpen}
+              onMenuClose={handleMenuClose}
+              onMenuOpen={handleMenuOpen}
+              menuIsOpen={isMenuOpen}
               onMenuScrollToBottom={() => {
                 if (searchResults.hasNextPage) {
                   onSearchNextPage();
@@ -197,18 +235,10 @@ const RelationInput = ({
         loadMore={
           shouldDisplayLoadMoreButton && (
             <TextButton
-              disabled={paginatedRelations.isLoading}
+              disabled={paginatedRelations.isLoading || paginatedRelations.isFetchingNextPage}
               onClick={() => onRelationLoadMore()}
-              startIcon={
-                paginatedRelations.isLoading ? (
-                  // TODO: To replace with loading prop on TextButton after DS release
-                  <LoaderWrapper>
-                    <Loader />
-                  </LoaderWrapper>
-                ) : (
-                  <Refresh />
-                )
-              }
+              loading={paginatedRelations.isLoading || paginatedRelations.isFetchingNextPage}
+              startIcon={<Refresh />}
             >
               {labelLoadMore}
             </TextButton>
@@ -300,6 +330,7 @@ const ReactQueryRelationResult = PropTypes.shape({
     ),
   }),
   hasNextPage: PropTypes.bool,
+  isFetchingNextPage: PropTypes.bool.isRequired,
   isLoading: PropTypes.bool.isRequired,
   isSuccess: PropTypes.bool.isRequired,
 });
@@ -327,6 +358,7 @@ RelationInput.defaultProps = {
   error: undefined,
   labelAction: null,
   labelLoadMore: null,
+  onSearchClose: undefined,
   required: false,
   relations: [],
   searchResults: [],
@@ -348,7 +380,7 @@ RelationInput.propTypes = {
   onRelationLoadMore: PropTypes.func.isRequired,
   onSearch: PropTypes.func.isRequired,
   onSearchNextPage: PropTypes.func.isRequired,
-  onSearchClose: PropTypes.func.isRequired,
+  onSearchClose: PropTypes.func,
   onSearchOpen: PropTypes.func.isRequired,
   placeholder: PropTypes.string.isRequired,
   publicationStateTranslations: PropTypes.shape({
